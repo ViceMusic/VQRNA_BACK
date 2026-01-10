@@ -19,14 +19,16 @@ from tangermeme.plot import plot_logo
 from tangermeme.ism import saturation_mutagenesis
 import matplotlib.pyplot as plt
 sys.path.append(os.path.abspath("./"))  # 加载绘制motif的文件
-from Utils import *
+from .Utils import *
 
-print("导入成功")
-exit(0)
+print("导入绘图模块成功")
 
 
 # 导入模型
-sys.path.append(os.path.abspath("../models/models"))  # 添加 `models` 目录到 Python 路径
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "..", "models", "models")
+
+sys.path.append(MODEL_DIR)
 from mymodel import Lucky
 from mymodel_51 import Lucky as Lucky_51
 # 设置设备类型
@@ -34,6 +36,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 加载尺寸为51的模型，使用这个模型作为滑动窗口的内容
 model_51 = Lucky_51().to(device)
 
+
+# 导入模型参数
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PARAS_DIR = os.path.join(BASE_DIR, "..", "paras", "mymodel_51")
 
 # 接下来需要完成的任务包括：
 # 1. 对输入进行调试，确保能输入正常序列并且排错
@@ -114,65 +120,7 @@ def trim_seq(seq, length):
     elif(length>=1001):
         return seq[:1001]
 
-
-# -------------预测区域-----------------------------
-
-# 下面是重新进行模型预测的方法，对于一个单一序列进行预测结果的呈现
-def predict_item(model, seq):
-    
-    # 准备输入信息，以及保存原始序列为char_seq, 谁让这个需求是从史山逐步添加的
-    char_seq = seq
-    length = len(seq)
-    seq = encode_dna_tensor(seq)  # 准备模型的输入
-
-    if(length<=50):
-        print("序列长度不够")
-        return []
-
-    # 信息的存储
-    meth = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # 判断发生了何种甲基化
-    index_meth = []  # 发生甲基化的类型
-    detail = []  # 三元组[发生甲基化位点, 碱基类型, 发生的修饰类型]
-    motif = None
-
-    # 进行多重预测
-    for index in range(1, 11):
-        print(f"预测内容{index}")
-        model.load_state_dict(
-            torch.load(f"../paras/mymodel_51/data{index}.pth", map_location=device, weights_only=True)[
-                'state_dict'])  # 加载对应的模型
-        model.eval()  # 设为评估模式
-        model.to(device)
-        seq = seq.to(device)  # 确保输入数据在正确的设备
-
-        # 对第index种类修饰进行预测, 遍历整个序列
-        for bit in range(length - 50):
-            out, atts, vq_loss, x_recon, perplexity = model(seq[:, bit:bit + 50])
-            if out[0, 0].item() < out[0, 1].item():  # 发生了这种甲基化
-                if pan(char_seq[bit + 25], index):  # 还要判断一下这种甲基化是否合理
-                    detail.append([bit + 25, index, char_seq[bit + 25]])  # 位点，索引，以及实际的字母号
-                    if index not in index_meth:
-                        index_meth.append(index)  # 如果之前没发生过这种甲基化就要进行一下记录了
-                        meth[index - 1] = 1
-
-    # 封装具体的信息
-    print("原始的内容为",char_seq)
-    print("甲基化类型为",meth)
-    print("甲基化种类为",index_meth)
-    print("甲基化的具体信息为",detail)
-    print("motif图片路径为",motif)
-
-    # item (生成的item为)
-
-
-
-    return []
-
-
-# 用这样的方法可以把模型给处理完
-# predict_item(model_51,"AAAAAGUCTCUTCUTCUTCUTCUTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAUAUAUAUTCAGCATGACCAAUAUAUAUAUAUAUAUAUAUAUAAUCCCCCTCTCTCTCTCTCTCTCTCTCTCCTCTCTCTCTCAAAA")
-
-
+# -------------画图区域-----------------------------
 # 下面是负责画图的-------------------------------
 
 class SliceWrapper(torch.nn.Module):
@@ -192,16 +140,14 @@ class SliceWrapper(torch.nn.Module):
         return result
 
 
+import io
 
 
-# 对单个序列化成motif
-def draw(seq,arr):
-    # 准备输入
-    seq=trim_seq(seq,len(seq)) # 还是得裁剪到规范的长度
-    length=len(seq)
+# 对单个序列化成motif的图片
+def draw(seq, arr):
+    seq = trim_seq(seq, len(seq))
+    length = len(seq)
 
-
-    # 设置颜色映射
     custom_colors = {
         'A': 'red',
         'C': 'blue',
@@ -209,65 +155,150 @@ def draw(seq,arr):
         'U': 'green'
     }
 
-    # 根据发生的第一种修饰来进行绘图
-    if len(arr)>0 :
+    plt.rcParams.update({'font.size': 20})
+
+    if len(arr) > 0:
         index = arr[0]
 
-        x = encode_dna_tensor(seq).to(device) # 转化为张量
+        x = encode_dna_tensor(seq).to(device)
         x = x.to(torch.int64)
         x = F.one_hot(x, num_classes=4).transpose(1, 2).float()
-        model = model_51.to(device)  # 根据长度获取模型,默认使用长度51的模型
-        model.load_state_dict(torch.load(f"./save/mymodel_51/data{index}.pth", map_location=device, weights_only=True)['state_dict'])  # 加载对应的模型
-        wrapper = SliceWrapper(model)
-        total_attr=None
-        plt.rcParams.update({'font.size': 20})  # 设置全局字体大小
 
-        # 默认设置长度为10
+        model = model_51.to(device)
+        pth_path = os.path.join(PARAS_DIR, f"data{index}.pth")
+        model.load_state_dict(
+            torch.load(pth_path, map_location=device, weights_only=True)['state_dict']
+        )
+
+        wrapper = SliceWrapper(model)
+
         plt.figure(figsize=(10, 5))
 
-        # 这里得大修一下()
-        if len(seq)==51:   # 这里做了一点点简单的修改
-            for bit in range(length - 50):
-                X_attr = saturation_mutagenesis(wrapper.cpu(), x.cpu(), start=0, end=50, device=device)
-                if total_attr is None:
-                    total_attr=X_attr
-                else:
-                    total_attr+=X_attr
-                avg_attr = abs(total_attr)
-                ax = plt.subplot(1, 1, 1)  # 5 行 1 列，选择第 1 个位置
-                plot_logo(avg_attr[0, :, :], ax=ax, color=custom_colors)  # 绘制特征重要性 logo 图
-                ax.set_title('Midpoint of the entire sequence:index=25', fontsize=14)
-                ax.tick_params(axis='both', labelsize=12)  # 设置坐标轴字体大小
-        else :
-            num=(len(seq)-1)//100 #计算出一共有多少个图片
-            for index in range(num):
-                X_attr = saturation_mutagenesis(wrapper.cpu(), x.cpu(), start=index*100, end=(index+1)*100, device=device)
-                total_attr = X_attr  # 初始化累加矩阵
-                avg_attr = abs(total_attr)
-                ax = plt.subplot(num, 1, index+1)  # 5 行 1 列，选择第 1 个位置
-                plot_logo(avg_attr[0, :, :], ax=ax, color=custom_colors)  # 绘制特征重要性 logo 图
-                ax.set_title(f'Midpoint of the sequence  :index={index*100+50}', fontsize=14)
-                ax.tick_params(axis='both', labelsize=12)  # 设置坐标轴字体大小
+        if len(seq) == 51:
+            
+            total_attr = None
+            for _ in range(length - 50):
+                X_attr = saturation_mutagenesis(
+                    wrapper.cpu(), x.cpu(), start=0, end=50, device=device
+                )
+                total_attr = X_attr if total_attr is None else total_attr + X_attr
 
+            avg_attr = abs(total_attr)
+            ax = plt.subplot(1, 1, 1)
+            plot_logo(avg_attr[0, :, :], ax=ax, color=custom_colors)
+            ax.set_title('Midpoint of the entire sequence: index=25')
+
+        else:
+            print("正常绘制")
+            num = (len(seq) - 1) // 100
+            for i in range(num):
+                X_attr = saturation_mutagenesis(
+                    wrapper.cpu(), x.cpu(),
+                    start=i * 100, end=(i + 1) * 100, device=device
+                )
+                avg_attr = abs(X_attr)
+                ax = plt.subplot(num, 1, i + 1)
+                plot_logo(avg_attr[0, :, :], ax=ax, color=custom_colors)
+                ax.set_title(f'Midpoint of the sequence: index={i * 100 + 50}')
 
         plt.tight_layout()
-        # 保存图像在对应的文件夹里面
-        filename=generate_unique_filename(extension=".svg")
-        plt.savefig('./Files/'+filename)
-
-        # 返回文件名称
-        return filename
-
 
     else:
-        plt.figure(figsize=(10, 6))  # 设定图片大小
-        plt.gca().set_facecolor('white')
+        print("不存在")
+        plt.figure(figsize=(10, 6))
         plt.axis('off')
-        plt.text(0.5, 0.5, "No relevant modifications detected",
-                 fontsize=20, color='black', ha='center', va='center')
-        plt.savefig('./motifs_combined.sv', format='svg')
-        filename = generate_unique_filename(extension=".svg")
-        plt.savefig('./Files/' + filename)
+        plt.text(
+            0.5, 0.5,
+            "No relevant modifications detected",
+            fontsize=20,
+            ha='center', va='center'
+        )
 
-        # 返回文件名称
-        return filename
+    # ====== 统一的 base64 输出 ======
+    buf = io.BytesIO()
+    plt.savefig(buf, format="svg", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+
+    img_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return img_base64
+
+
+# -------------预测区域-----------------------------
+# 对单一序列进行完整的绘图操作
+
+# 下面是重新进行模型预测的方法，对于一个单一序列进行预测结果的呈现
+def predict_item(seq):
+
+    model=model_51
+    # 准备输入信息，以及保存原始序列为char_seq, 谁让这个需求是从史山逐步添加的
+    char_seq = seq
+    length = len(seq)
+    seq = encode_dna_tensor(seq)  # 准备模型的输入
+
+    if(length<=50):
+        print("序列长度不够")
+        return []
+
+    # 信息的存储
+    meth = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # 判断发生了何种甲基化
+    index_meth = []  # 发生甲基化的类型
+    detail = []  # 三元组[发生甲基化位点, 碱基类型, 发生的修饰类型]
+    motif = None
+
+    # 进行多重预测
+    for index in range(1, 11):
+        print(f"预测内容{index}")
+        pth_path = os.path.join(PARAS_DIR, f"data{index}.pth")
+        model.load_state_dict(
+            torch.load(pth_path, map_location=device, weights_only=True)[
+                'state_dict'])  # 加载对应的模型
+
+
+        model.eval()  # 设为评估模式
+        model.to(device)
+        seq = seq.to(device)  # 确保输入数据在正确的设备
+
+        # 对第index种类修饰进行预测, 遍历整个序列
+        for bit in range(length - 50):
+            out, atts, vq_loss, x_recon, perplexity = model(seq[:, bit:bit + 50])
+            if out[0, 0].item() < out[0, 1].item():  # 发生了这种甲基化
+                if pan(char_seq[bit + 25], index):  # 还要判断一下这种甲基化是否合理
+                    detail.append([bit + 25, index, char_seq[bit + 25]])  # 位点，索引，以及实际的字母号
+                    if index not in index_meth:
+                        index_meth.append(index)  # 如果之前没发生过这种甲基化就要进行一下记录了
+                        meth[index - 1] = 1
+
+    # 封装具体的信息
+    print("原始的内容为",char_seq)
+    print("甲基化类型为",meth)
+    print("甲基化种类为",index_meth)
+    print("甲基化的具体信息为",detail)
+
+    # 开始进行绘图操作，操作方式如下
+    motif_base64=draw(seq,index_meth)
+
+    print("motif图片为",motif_base64[:10])
+
+    # item (生成的item为)
+
+
+
+    return {
+        'original_seq':char_seq,
+        'motif_types':index_meth,
+        'details':detail,
+        'image':motif_base64
+    }
+
+
+
+
+# 用这样的方法可以把模型给处理完
+# predict_item(model_51,"AAAAAGUCTCUTCUTCUTCUTCUTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAUAUAUAUTCAGCATGACCAAUAUAUAUAUAUAUAUAUAUAUAAUCCCCCTCTCTCTCTCTCTCTCTCTCTCCTCTCTCTCTCAAAA")
+
+
+# 对于多个模型进行绘图的操作
+
+
+

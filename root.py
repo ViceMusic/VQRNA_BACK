@@ -17,11 +17,6 @@ def space():
     print(motifs)
 
 
-space()
-
-exit("就测试用，不要运行这个文件")
-
-
 
 def new_client(client):
     print("新的客户端连接, 暂时不支持多线程运行:", client['id'])
@@ -67,4 +62,4 @@ def handle_data():
 
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', debug=True, port=6077)
+    app.run(host='0.0.0.0', debug=True, port=6077)

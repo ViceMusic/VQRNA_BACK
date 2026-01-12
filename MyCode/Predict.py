@@ -24,17 +24,38 @@ from .Utils import *
 print("导入绘图模块成功")
 
 
-# 导入模型
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = os.path.join(BASE_DIR, "..", "models", "models")
+import os
+import sys
+import torch
 
-sys.path.append(MODEL_DIR)
+# 获取基础路径
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- 1. 导入第一个模型 (models/models) ---
+MODEL_DIR = os.path.join(BASE_DIR, "..", "models", "models")
+if MODEL_DIR not in sys.path:
+    sys.path.insert(0, MODEL_DIR) # 使用 insert(0, ...) 确保优先搜索该路径
+
 from mymodel import Lucky
 from mymodel_51 import Lucky as Lucky_51
-# 设置设备类型
+
+# --- 2. 导入画图的模型 (models/motifmodel) ---
+MODEL_MOTIF_DIR = os.path.join(BASE_DIR, "..", "models", "motifmodel")
+if MODEL_MOTIF_DIR not in sys.path:
+    sys.path.insert(0, MODEL_MOTIF_DIR) # 同样插入到最前面
+
+# 注意：这里会优先在 MODEL_MOTIF_DIR 搜索
+from motifmodel_51 import Lucky as Lucky_motif
+
+# --- 3. 统一设置设备并加载 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# 加载尺寸为51的模型，使用这个模型作为滑动窗口的内容
+
 model_51 = Lucky_51().to(device)
+model_motif = Lucky_motif().to(device)
+
+print("模型加载完成：")
+print(f"Lucky_51 来自: {MODEL_DIR}")
+print(f"Lucky_motif 来自: {MODEL_MOTIF_DIR}")
 
 
 # 导入模型参数
@@ -145,6 +166,7 @@ import io
 
 # 对单个序列化成motif的图片
 def draw(seq, arr):
+    print("正常绘制序列总长度为",len(seq))
     seq = trim_seq(seq, len(seq))
     length = len(seq)
 
@@ -162,9 +184,11 @@ def draw(seq, arr):
 
         x = encode_dna_tensor(seq).to(device)
         x = x.to(torch.int64)
+        
         x = F.one_hot(x, num_classes=4).transpose(1, 2).float()
+        print("这里输出x的数值",x)
 
-        model = model_51.to(device)
+        model = model_motif.to(device)
         pth_path = os.path.join(PARAS_DIR, f"data{index}.pth")
         model.load_state_dict(
             torch.load(pth_path, map_location=device, weights_only=True)['state_dict']
@@ -175,30 +199,40 @@ def draw(seq, arr):
         plt.figure(figsize=(10, 5))
 
         if len(seq) == 51:
-            
+            print("绘制标准长度")
             total_attr = None
             for _ in range(length - 50):
-                X_attr = saturation_mutagenesis(
-                    wrapper.cpu(), x.cpu(), start=0, end=50, device=device
-                )
+                
+                X_attr = saturation_mutagenesis(wrapper.cpu(), x.cpu(), start=0, end=50, device=device )
+                print("图片绘制结束")
                 total_attr = X_attr if total_attr is None else total_attr + X_attr
-
             avg_attr = abs(total_attr)
             ax = plt.subplot(1, 1, 1)
-            plot_logo(avg_attr[0, :, :], ax=ax, color=custom_colors)
+            plot_logo(avg_attr[0, :, :], ax=ax)#, color=custom_colors
             ax.set_title('Midpoint of the entire sequence: index=25')
+            print("图片绘制结束1") # 代码完全不会走到这里，更别提走到下面了，后面更是没有任何异常就结束了
+            
 
         else:
-            print("正常绘制")
+            print("正常绘制序列总长度为",len(seq))
+            
             num = (len(seq) - 1) // 100
+            print("需要绘制的图为",num)
             for i in range(num):
+                print("测试？？")
                 X_attr = saturation_mutagenesis(
                     wrapper.cpu(), x.cpu(),
                     start=i * 100, end=(i + 1) * 100, device=device
                 )
                 avg_attr = abs(X_attr)
                 ax = plt.subplot(num, 1, i + 1)
-                plot_logo(avg_attr[0, :, :], ax=ax, color=custom_colors)
+                print("avg_attr shape:", avg_attr.shape)
+                print("avg_attr min:", avg_attr.min().item())
+                print("avg_attr max:", avg_attr.max().item())
+                print("avg_attr sum:", avg_attr.sum().item())
+                print("any non-zero:", (avg_attr != 0).any().item())
+
+                plot_logo(avg_attr[0, :, :], ax=ax)  # , color=custom_colors
                 ax.set_title(f'Midpoint of the sequence: index={i * 100 + 50}')
 
         plt.tight_layout()
@@ -216,11 +250,13 @@ def draw(seq, arr):
 
     # ====== 统一的 base64 输出 ======
     buf = io.BytesIO()
-    plt.savefig(buf, format="svg", bbox_inches="tight")
+    plt.savefig(buf, format="svg") # , bbox_inches="tight"
+    plt.savefig("test.svg", format="svg") # , bbox_inches="tight"
     plt.close()
     buf.seek(0)
 
     img_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    print("图片生成成功")
     return img_base64
 
 
@@ -276,7 +312,7 @@ def predict_item(seq):
     print("甲基化的具体信息为",detail)
 
     # 开始进行绘图操作，操作方式如下
-    motif_base64=draw(seq,index_meth)
+    motif_base64=draw(char_seq,index_meth)
 
     print("motif图片为",motif_base64[:10])
 

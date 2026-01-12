@@ -218,3 +218,17 @@ class SQLiteDB:
         finally:
             conn.close()
 
+    # =========================================================
+    # 删除 / 清空方法
+    # =========================================================
+
+    def clear_results_table(self) -> None:
+        """删除 results 表中的所有数据（保留表结构）"""
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM results")
+            conn.commit()
+            print("🧹 已清空 results 表中的所有数据")
+        finally:
+            conn.close()
